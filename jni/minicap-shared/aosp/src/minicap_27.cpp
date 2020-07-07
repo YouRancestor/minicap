@@ -111,9 +111,110 @@ public:
 
     return createVirtualDisplay();
   }
+  static bool isDeviceRotated(int orientation) {
+    return orientation != android::DISPLAY_ORIENTATION_0 &&
+      orientation != android::DISPLAY_ORIENTATION_180;
+  }
+  void setDisplayProjection(const android::sp<android::IBinder>& dpy,
+        const int orientation, const uint32_t width, const uint32_t height) {
+
+    // Set the region of the layer stack we're interested in, which in our
+    // case is "all of it".  If the app is rotated (so that the width of the
+    // app is based on the height of the display), reverse width/height.
+    bool deviceRotated = isDeviceRotated(orientation);
+    uint32_t sourceWidth, sourceHeight;
+    if (!deviceRotated) {
+        sourceWidth = width;
+        sourceHeight = height;
+    } else {
+        ALOGV("using rotated width/height");
+        sourceHeight = 1920/*width*/;
+        sourceWidth = 1080/*height*/;
+    }
+    android::Rect layerStackRect(sourceWidth, sourceHeight);
+
+    // We need to preserve the aspect ratio of the display.
+    float displayAspect = (float) sourceHeight / (float) sourceWidth;
+
+
+    // Set the way we map the output onto the display surface (which will
+    // be e.g. 1280x720 for a 720p video).  The rect is interpreted
+    // post-rotation, so if the display is rotated 90 degrees we need to
+    // "pre-rotate" it by flipping width/height, so that the orientation
+    // adjustment changes it back.
+    //
+    // We might want to encode a portrait display as landscape to use more
+    // of the screen real estate.  (If players respect a 90-degree rotation
+    // hint, we can essentially get a 720x1280 video instead of 1280x720.)
+    // In that case, we swap the configured video width/height and then
+    // supply a rotation value to the display projection.
+    uint32_t videoWidth, videoHeight;
+    uint32_t outWidth, outHeight;
+    if (!deviceRotated) {
+        videoWidth = /*gVideoWidth*/mDesiredWidth;
+        videoHeight = /*gVideoHeight*/mDesiredHeight;
+    } else {
+        videoWidth = /*gVideoHeight*/mDesiredHeight;
+        videoHeight = /*gVideoWidth*/mDesiredWidth;
+    }
+    if (videoHeight > (uint32_t)(videoWidth * displayAspect)) {
+        // limited by narrow width; reduce height
+        outWidth = videoWidth;
+        outHeight = (uint32_t)(videoWidth * displayAspect);
+    } else {
+        // limited by short height; restrict width
+        outHeight = videoHeight;
+        outWidth = (uint32_t)(videoHeight / displayAspect);
+    }
+    uint32_t offX, offY;
+    offX = (videoWidth - outWidth) / 2;
+    offY = (videoHeight - outHeight) / 2;
+
+    int ori = 0;
+    android::Rect displayRect;
+    if (mDesiredOrientation == Minicap::ORIENTATION_FOLLOW_SYSTEM) {
+      // 随系统
+      if (deviceRotated) {
+        ori = 3;
+        displayRect = android::Rect(0, 0, sourceWidth, sourceHeight);
+      } else {
+        ori = 0;
+        displayRect = android::Rect(0, 0, videoWidth, videoHeight);
+      }
+    } else {
+      ori = 0;
+      displayRect = android::Rect(offX, offY, offX + outWidth, offY + outHeight); // 锁定横屏
+    }
+
+    android::SurfaceComposerClient::setDisplayProjection(dpy,
+            ori,
+            layerStackRect, displayRect);
+  }
 
   virtual int
   consumePendingFrame(Minicap::Frame* frame) {
+    Minicap::DisplayInfo info;
+    minicap_try_get_display_info(0, &info);
+    android::DisplayInfo mainDpyInfo;
+    mainDpyInfo.w = info.width;
+    mainDpyInfo.h = info.height;
+    mainDpyInfo.xdpi = info.xdpi;
+    mainDpyInfo.ydpi = info.ydpi;
+    mainDpyInfo.fps = info.fps;
+    mainDpyInfo.density = info.density;
+    mainDpyInfo.orientation = info.orientation;
+    mainDpyInfo.secure = info.secure;
+    // static uint32_t oldwidth = 0;
+    // static uint32_t oldheight = 0;
+    // if (oldwidth!=mainDpyInfo.w) {
+      printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Orientation: %d, %d x %d.\n", mainDpyInfo.orientation, mainDpyInfo.w, mainDpyInfo.h);
+      android::SurfaceComposerClient::openGlobalTransaction();
+      setDisplayProjection(mVirtualDisplay, info.orientation, info.width, info.height);
+      android::SurfaceComposerClient::closeGlobalTransaction();
+      // oldwidth = mainDpyInfo.w;
+      // oldheight = mainDpyInfo.h;
+    // }
+
     android::status_t err;
 
     if ((err = mConsumer->lockNextBuffer(&mBuffer)) != android::NO_ERROR) {
@@ -205,7 +306,25 @@ private:
     uint32_t targetWidth, targetHeight;
     android::status_t err;
 
+    Minicap::DisplayInfo info;
+    minicap_try_get_display_info(0, &info);
+    bool roatated = isDeviceRotated(info.orientation); // 90 or 270
     switch (mDesiredOrientation) {
+    case Minicap::ORIENTATION_FOLLOW_SYSTEM:
+      if (roatated) {
+        sourceWidth = mRealHeight;
+        sourceHeight = mRealWidth;
+        targetWidth = mDesiredHeight;
+        targetHeight = mDesiredWidth;
+      } else {
+        sourceWidth = mRealWidth;
+        sourceHeight = mRealHeight;
+        targetWidth = mDesiredWidth;
+        targetHeight = mDesiredHeight;
+      }
+
+      break;
+
     case Minicap::ORIENTATION_90:
       sourceWidth = mRealHeight;
       sourceHeight = mRealWidth;
@@ -276,8 +395,9 @@ private:
     MCINFO("Publishing virtual display");
     android::SurfaceComposerClient::openGlobalTransaction();
     android::SurfaceComposerClient::setDisplaySurface(mVirtualDisplay, mBufferProducer);
-    android::SurfaceComposerClient::setDisplayProjection(mVirtualDisplay,
-      android::DISPLAY_ORIENTATION_0, layerStackRect, visibleRect);
+    // android::SurfaceComposerClient::setDisplayProjection(mVirtualDisplay,
+    //   android::DISPLAY_ORIENTATION_0, layerStackRect, visibleRect);
+    setDisplayProjection(mVirtualDisplay, info.orientation, sourceWidth, sourceHeight);
     android::SurfaceComposerClient::setDisplayLayerStack(mVirtualDisplay, 0); // default stack
     android::SurfaceComposerClient::closeGlobalTransaction();
 

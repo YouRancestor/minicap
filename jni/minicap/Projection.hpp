@@ -121,6 +121,12 @@ public:
             lo += 1;
             goto consume;
           }
+          if (*lo == '-') {
+            proj.rotation = 4;
+            mState = satisfied;
+            lo += 1;
+            goto consume;
+          }
           return false;
         case rotation_90_2:
           if (*lo == '0') {

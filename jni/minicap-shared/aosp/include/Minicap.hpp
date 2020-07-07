@@ -32,6 +32,7 @@ public:
     ORIENTATION_90   = 1,
     ORIENTATION_180  = 2,
     ORIENTATION_270  = 3,
+    ORIENTATION_FOLLOW_SYSTEM = 4,
   };
 
   struct DisplayInfo {
